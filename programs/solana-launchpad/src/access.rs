@@ -1,6 +1,7 @@
 use crate::{
   account::{IdoAccount, IdoTimes},
   error::ErrorCode,
+  merkle_proof::MerkleProof,
 };
 use anchor_lang::prelude::*;
 
@@ -79,6 +80,17 @@ pub fn escrow_over(ido_account: &IdoAccount) -> ProgramResult {
   require!(
     clock.unix_timestamp > ido_account.ido_times.end_escrow,
     ErrorCode::EscrowNotOver
+  );
+
+  Ok(())
+}
+
+pub fn only_for_whitelisted(proof: Vec<[u8; 32]>, root: [u8; 32], value: &[u8]) -> ProgramResult {
+  let leaf = MerkleProof::calc_leaf_hash(value);
+
+  require!(
+    MerkleProof::verify(proof, root, leaf),
+    ErrorCode::InvalidProof
   );
 
   Ok(())

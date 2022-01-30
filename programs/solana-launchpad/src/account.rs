@@ -4,6 +4,7 @@ use anchor_lang::prelude::*;
 #[derive(Default)]
 pub struct IdoAccount {
   pub ido_name: [u8; 10], // Setting an arbitrary max of ten characters in the ido name.
+  pub merkle_root: [u8; 32],
   pub bumps: PoolBumps,
   pub ido_authority: Pubkey,
 

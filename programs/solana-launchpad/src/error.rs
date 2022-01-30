@@ -24,4 +24,8 @@ pub enum ErrorCode {
   UsdcNotEqRedeem,
   #[msg("Given nonce is invalid")]
   InvalidNonce,
+  #[msg("Given proof is invalid")]
+  InvalidProof,
+  #[msg("Unauthorized")]
+  Unauthorized,
 }

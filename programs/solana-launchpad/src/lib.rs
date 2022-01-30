@@ -65,16 +65,28 @@ pub mod solana_launchpad {
         Ok(())
     }
 
+    pub fn set_pool_merkle_root(
+        ctx: Context<SetPoolMerkleRoot>,
+        merkle_root: [u8; 32],
+    ) -> ProgramResult {
+        ctx.accounts.ido_account.merkle_root = merkle_root;
+        Ok(())
+    }
     #[access_control(unrestricted_phase(&ctx.accounts.ido_account))]
     pub fn exchange_usdc_for_redeemable(
         ctx: Context<ExchangeUsdcForRedeemable>,
         amount: u64,
+        proof: Vec<[u8; 32]>,
     ) -> ProgramResult {
-        // While token::transfer will check this, we prefer a verbose err msg.
+        only_for_whitelisted(
+            proof,
+            ctx.accounts.ido_account.merkle_root,
+            ctx.accounts.user_authority.key().as_ref(),
+        )?;
+
         if ctx.accounts.user_usdc.amount < amount {
             return Err(ErrorCode::LowUsdc.into());
         }
-
         // Transfer user's USDC to pool USDC account.
         let cpi_accounts = Transfer {
             from: ctx.accounts.user_usdc.to_account_info(),
