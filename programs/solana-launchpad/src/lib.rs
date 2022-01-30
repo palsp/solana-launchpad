@@ -2,6 +2,9 @@ use anchor_lang::prelude::*;
 
 // cannot use rust-crypto with anchor
 // use merkle_proof::{Keccek256, MerkleProof};
+mod access;
+mod account;
+mod error;
 mod merkle_proof;
 
 use crate::merkle_proof::MerkleProof;
