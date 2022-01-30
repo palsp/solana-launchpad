@@ -1,5 +1,5 @@
 [programs.localnet]
-solana_launchpad = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+solana_launchpad = "6xcV8u1dodsopTqchGiBg5MTcscFmJatHkymhbPbKkwP"
 
 [registry]
 url = "https://anchor.projectserum.com"
