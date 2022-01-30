@@ -4,17 +4,19 @@ import {
   getTokenAccount,
   createMint,
   createTokenAccount,
+  getProof,
+  hash,
+  findRelatedProgramAddress,
+  createATA,
 } from "./utils";
 import { Program } from "@project-serum/anchor";
 import { SolanaLaunchpad } from "../target/types/solana_launchpad";
-import {
-  Token,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
+import { Token, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as assert from "assert";
 
 import { faker } from "@faker-js/faker";
+import { MerkleTree } from "merkletreejs";
+import keccak256 from "keccak256";
 import { describe } from "mocha";
 
 describe("solana-launchpad", () => {
@@ -38,6 +40,23 @@ describe("solana-launchpad", () => {
 
   let idoAuthorityUsdc: anchor.web3.PublicKey;
   let idoAuthorityWatermelon: anchor.web3.PublicKey;
+
+  const usersAcc: anchor.web3.Keypair[] = [];
+  const NUM_USER = 10;
+  for (let i = 0; i < NUM_USER; i++) {
+    usersAcc.push(anchor.web3.Keypair.generate());
+  }
+
+  const leaves = usersAcc.map((acc) => hash(acc.publicKey.toBuffer()));
+
+  leaves.push(hash(program.provider.wallet.publicKey.toBuffer()));
+
+  const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+
+  // sent to client
+  const rootHex = tree.getHexRoot();
+
+  const root = Buffer.from(rootHex.slice(2), "hex");
 
   it("Initializes the state-of-the-world", async () => {
     usdcMintAccount = await createMint(provider);
@@ -109,9 +128,9 @@ describe("solana-launchpad", () => {
     idoTimes = new IdoTimes();
     const nowBn = new anchor.BN(Date.now() / 1000);
     idoTimes.startIdo = nowBn.add(new anchor.BN(5));
-    idoTimes.endDeposits = nowBn.add(new anchor.BN(10));
-    idoTimes.endIdo = nowBn.add(new anchor.BN(15));
-    idoTimes.endEscrow = nowBn.add(new anchor.BN(16));
+    idoTimes.endDeposits = nowBn.add(new anchor.BN(20));
+    idoTimes.endIdo = nowBn.add(new anchor.BN(25));
+    idoTimes.endEscrow = nowBn.add(new anchor.BN(26));
 
     await program.rpc.initializePool(
       idoName,
@@ -143,56 +162,141 @@ describe("solana-launchpad", () => {
     assert.ok(_idoAuthorityWatermelonAccount.amount.eq(new anchor.BN(0)));
   });
 
-  let userUsdc: anchor.web3.PublicKey;
-  const firstDeposit = new anchor.BN(10_000_349);
-
-  it("Exchanges user USDC for redeemable tokens", async () => {
-    // Wait until the IDO has opened.
-    if (Date.now() < idoTimes.startIdo.toNumber() * 1000) {
-      await sleep(idoTimes.startIdo.toNumber() * 1000 - Date.now() + 2000);
+  it("Not allow ido authority to set merkle proof", async () => {
+    const attacker = anchor.web3.Keypair.generate();
+    const [idoAccount] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from(idoName)],
+      program.programId
+    );
+    try {
+      await program.rpc.setPoolMerkleRoot([...root], {
+        accounts: {
+          idoAccount,
+          userAuthority: attacker.publicKey,
+        },
+        signers: [attacker],
+      });
+      assert.fail(
+        "it should not allow non ido authority to set pool merkle root"
+      );
+    } catch (e) {
+      assert.equal(e.msg, "Unauthorized");
     }
+  });
 
+  it("Allow ido authority to set merkle proof", async () => {
     const [idoAccount] = await anchor.web3.PublicKey.findProgramAddress(
       [Buffer.from(idoName)],
       program.programId
     );
 
-    const [redeemableMint] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("redeemable_mint")],
-      program.programId
-    );
+    await program.rpc.setPoolMerkleRoot([...root], {
+      accounts: {
+        idoAccount,
+        userAuthority: program.provider.wallet.publicKey,
+      },
+    });
 
-    const [poolUsdc] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("pool_usdc")],
-      program.programId
+    let idoAccountInfo = await program.account.idoAccount.fetch(idoAccount);
+    assert.equal(
+      Buffer.from(idoAccountInfo.merkleRoot).toString("hex"),
+      rootHex.slice(2)
     );
+  });
 
-    userUsdc = await Token.getAssociatedTokenAddress(
-      ASSOCIATED_TOKEN_PROGRAM_ID,
-      TOKEN_PROGRAM_ID,
+  let userUsdc: anchor.web3.PublicKey;
+  const firstDeposit = new anchor.BN(10_000_349);
+
+  it("Not allow non-whitelisted user to exchange USDC for redeemable tokens", async () => {
+    // Wait until the IDO has opened.
+    if (Date.now() < idoTimes.startIdo.toNumber() * 1000) {
+      await sleep(idoTimes.startIdo.toNumber() * 1000 - Date.now() + 2000);
+    }
+
+    const attacker = anchor.web3.Keypair.generate();
+
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
+
+    const attackerUsdc = await createATA(
+      attacker,
       usdcMint,
-      program.provider.wallet.publicKey
+      program.provider,
+      true
     );
 
-    // Get the instructions to add to the RPC call
-    let createUserUsdcInstr = Token.createAssociatedTokenAccountInstruction(
-      ASSOCIATED_TOKEN_PROGRAM_ID,
-      TOKEN_PROGRAM_ID,
-      usdcMint,
-      userUsdc,
+    await usdcMintAccount.mintTo(
+      attackerUsdc,
       program.provider.wallet.publicKey,
-      program.provider.wallet.publicKey
+      [],
+      firstDeposit.toNumber()
     );
-    let createUserUsdcTx = new anchor.web3.Transaction().add(
-      createUserUsdcInstr
+
+    const _attackerUsdcAccount = await getTokenAccount(provider, attackerUsdc);
+    assert.ok(_attackerUsdcAccount.amount.eq(firstDeposit));
+
+    const [attackerRedeemable] = await anchor.web3.PublicKey.findProgramAddress(
+      [
+        attacker.publicKey.toBuffer(),
+        Buffer.from(idoName),
+        Buffer.from("user_redeemable"),
+      ],
+      program.programId
     );
-    await provider.send(createUserUsdcTx);
+
+    const proof = getProof(tree, program.provider.wallet.publicKey);
+
+    try {
+      await program.rpc.exchangeUsdcForRedeemable(firstDeposit, proof, {
+        accounts: {
+          userAuthority: attacker.publicKey,
+          userUsdc: attackerUsdc,
+          userRedeemable: attackerRedeemable,
+          idoAccount,
+          usdcMint,
+          redeemableMint,
+          poolUsdc,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        instructions: [
+          program.instruction.initUserRedeemable({
+            accounts: {
+              userAuthority: attacker.publicKey,
+              userRedeemable: attackerRedeemable,
+              idoAccount,
+              redeemableMint,
+              systemProgram: anchor.web3.SystemProgram.programId,
+              tokenProgram: TOKEN_PROGRAM_ID,
+              rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+            },
+            signers: [attacker],
+          }),
+        ],
+        signers: [attacker],
+      });
+      assert.fail("it should not allow");
+    } catch (e) {
+      assert.equal(e.msg, "Given proof is invalid");
+    }
+  });
+
+  it("Exchanges user USDC for redeemable tokens", async () => {
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
+
+    userUsdc = await createATA(
+      program.provider.wallet,
+      usdcMint,
+      program.provider
+    );
+
     await usdcMintAccount.mintTo(
       userUsdc,
       provider.wallet.publicKey,
       [],
       firstDeposit.toNumber()
     );
+
     const _userUsdcAccount = await getTokenAccount(provider, userUsdc);
     assert.ok(_userUsdcAccount.amount.eq(firstDeposit));
 
@@ -204,32 +308,36 @@ describe("solana-launchpad", () => {
       ],
       program.programId
     );
-
-    const tx = await program.rpc.exchangeUsdcForRedeemable(firstDeposit, {
-      accounts: {
-        userAuthority: provider.wallet.publicKey,
-        userUsdc,
-        userRedeemable,
-        idoAccount,
-        usdcMint,
-        redeemableMint,
-        poolUsdc,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      },
-      instructions: [
-        program.instruction.initUserRedeemable({
-          accounts: {
-            userAuthority: provider.wallet.publicKey,
-            userRedeemable,
-            idoAccount,
-            redeemableMint,
-            systemProgram: anchor.web3.SystemProgram.programId,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-          },
-        }),
-      ],
-    });
+    const proof = getProof(tree, program.provider.wallet.publicKey);
+    const tx = await program.rpc.exchangeUsdcForRedeemable(
+      firstDeposit,
+      proof,
+      {
+        accounts: {
+          userAuthority: provider.wallet.publicKey,
+          userUsdc,
+          userRedeemable,
+          idoAccount,
+          usdcMint,
+          redeemableMint,
+          poolUsdc,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        instructions: [
+          program.instruction.initUserRedeemable({
+            accounts: {
+              userAuthority: provider.wallet.publicKey,
+              userRedeemable,
+              idoAccount,
+              redeemableMint,
+              systemProgram: anchor.web3.SystemProgram.programId,
+              tokenProgram: TOKEN_PROGRAM_ID,
+              rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+            },
+          }),
+        ],
+      }
+    );
 
     const _poolUsdcAccount = await getTokenAccount(provider, poolUsdc);
     assert.ok(_poolUsdcAccount.amount.eq(firstDeposit));
@@ -246,51 +354,16 @@ describe("solana-launchpad", () => {
     secondUserUsdc: anchor.web3.PublicKey;
 
   it("Exchanges a second users USDC for redeemable tokens", async () => {
-    const [idoAccount] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName)],
-      program.programId
-    );
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
+    secondUserKeypair = usersAcc[2];
 
-    const [redeemableMint] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("redeemable_mint")],
-      program.programId
-    );
-
-    const [poolUsdc] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("pool_usdc")],
-      program.programId
-    );
-
-    secondUserKeypair = anchor.web3.Keypair.generate();
-
-    const transferSolIx = anchor.web3.SystemProgram.transfer({
-      fromPubkey: provider.wallet.publicKey,
-      lamports: 100_000_000_000, // 100 sol
-      toPubkey: secondUserKeypair.publicKey,
-    });
-
-    secondUserUsdc = await Token.getAssociatedTokenAddress(
-      ASSOCIATED_TOKEN_PROGRAM_ID,
-      TOKEN_PROGRAM_ID,
+    secondUserUsdc = await createATA(
+      secondUserKeypair,
       usdcMint,
-      secondUserKeypair.publicKey
+      program.provider,
+      true
     );
-
-    const createSecondUserUsdcIx =
-      Token.createAssociatedTokenAccountInstruction(
-        ASSOCIATED_TOKEN_PROGRAM_ID,
-        TOKEN_PROGRAM_ID,
-        usdcMint,
-        secondUserUsdc,
-        secondUserKeypair.publicKey,
-        provider.wallet.publicKey
-      );
-
-    let createSecondUserUsdcTx = new anchor.web3.Transaction();
-    createSecondUserUsdcTx.add(transferSolIx);
-    createSecondUserUsdcTx.add(createSecondUserUsdcIx);
-
-    await provider.send(createSecondUserUsdcTx);
 
     await usdcMintAccount.mintTo(
       secondUserUsdc,
@@ -311,34 +384,38 @@ describe("solana-launchpad", () => {
         ],
         program.programId
       );
-
-    const tx = await program.rpc.exchangeUsdcForRedeemable(secondDeposit, {
-      accounts: {
-        userAuthority: secondUserKeypair.publicKey,
-        userUsdc: secondUserUsdc,
-        userRedeemable: secondUserRedeemable,
-        idoAccount,
-        usdcMint,
-        redeemableMint,
-        poolUsdc,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      },
-      signers: [secondUserKeypair],
-      preInstructions: [
-        program.instruction.initUserRedeemable({
-          accounts: {
-            userAuthority: secondUserKeypair.publicKey,
-            userRedeemable: secondUserRedeemable,
-            idoAccount,
-            redeemableMint,
-            systemProgram: anchor.web3.SystemProgram.programId,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-          },
-          signers: [secondUserKeypair],
-        }),
-      ],
-    });
+    const proof = getProof(tree, secondUserKeypair.publicKey);
+    const tx = await program.rpc.exchangeUsdcForRedeemable(
+      secondDeposit,
+      proof,
+      {
+        accounts: {
+          userAuthority: secondUserKeypair.publicKey,
+          userUsdc: secondUserUsdc,
+          userRedeemable: secondUserRedeemable,
+          idoAccount,
+          usdcMint,
+          redeemableMint,
+          poolUsdc,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        signers: [secondUserKeypair],
+        preInstructions: [
+          program.instruction.initUserRedeemable({
+            accounts: {
+              userAuthority: secondUserKeypair.publicKey,
+              userRedeemable: secondUserRedeemable,
+              idoAccount,
+              redeemableMint,
+              systemProgram: anchor.web3.SystemProgram.programId,
+              tokenProgram: TOKEN_PROGRAM_ID,
+              rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+            },
+            signers: [secondUserKeypair],
+          }),
+        ],
+      }
+    );
 
     _secondUserUsdc = await getTokenAccount(provider, secondUserUsdc);
     assert.ok(_secondUserUsdc.amount.eq(new anchor.BN(0)));
@@ -355,6 +432,7 @@ describe("solana-launchpad", () => {
 
     assert.ok(_poolUSDC.amount.eq(totalPoolUsdc));
   });
+
   const firstWithdrawal = new anchor.BN(2_000_000);
   it("Exchanges user Redeemable tokens for USDC", async () => {
     const [idoAccount] = await anchor.web3.PublicKey.findProgramAddress(
