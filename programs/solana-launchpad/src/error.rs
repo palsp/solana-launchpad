@@ -8,8 +8,8 @@ pub enum ErrorCode {
   SeqTimes,
   #[msg("IDO has not started")]
   StartIdoTime,
-  #[msg("Deposits period has ended")]
-  EndDepositsTime,
+  #[msg("Whitelisted period has ended")]
+  EndWhitelistedTime,
   #[msg("IDO has ended")]
   EndIdoTime,
   #[msg("IDO has not finished yet")]
@@ -28,4 +28,8 @@ pub enum ErrorCode {
   InvalidProof,
   #[msg("Unauthorized")]
   Unauthorized,
+  #[msg("Given amount out is invalid")]
+  InvalidAmountOut,
+  #[msg("Amount paid is invalid")]
+  InvalidAmountPaid,
 }

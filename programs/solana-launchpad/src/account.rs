@@ -7,23 +7,22 @@ pub struct IdoAccount {
   pub merkle_root: [u8; 32],
   pub bumps: PoolBumps,
   pub ido_authority: Pubkey,
-
   pub usdc_mint: Pubkey,
   pub redeemable_mint: Pubkey,
   pub watermelon_mint: Pubkey,
   pub pool_usdc: Pubkey,
   pub pool_watermelon: Pubkey,
-
-  pub num_ido_tokens: u64,
+  pub private_target_investment: u64,
+  pub num_ido_tokens_private: u64,
+  pub num_ido_tokens_public: u64,
   pub ido_times: IdoTimes,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Default, Clone, Copy)]
 pub struct IdoTimes {
   pub start_ido: i64,
-  pub end_deposits: i64,
+  pub end_whitelisted: i64,
   pub end_ido: i64,
-  pub end_escrow: i64,
 }
 #[derive(AnchorSerialize, AnchorDeserialize, Default, Clone)]
 pub struct PoolBumps {
