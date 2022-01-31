@@ -8,14 +8,16 @@ pub enum ErrorCode {
   SeqTimes,
   #[msg("IDO has not started")]
   StartIdoTime,
+  #[msg("Deposit period has ended")]
+  EndDeposits,
   #[msg("Whitelisted period has ended")]
   EndWhitelistedTime,
   #[msg("IDO has ended")]
   EndIdoTime,
   #[msg("IDO has not finished yet")]
   IdoNotOver,
-  #[msg("Escrow period has not finished yet")]
-  EscrowNotOver,
+  #[msg("Whitelisted period in progress")]
+  WhitelistNotOver,
   #[msg("Insufficient USDC")]
   LowUsdc,
   #[msg("Insufficient redeemable tokens")]
@@ -32,4 +34,18 @@ pub enum ErrorCode {
   InvalidAmountOut,
   #[msg("Amount paid is invalid")]
   InvalidAmountPaid,
+
+  // DEBUG
+  #[msg("A")]
+  A,
+  #[msg("B")]
+  B,
+  #[msg("C")]
+  C,
+  #[msg("D")]
+  D,
+  #[msg("E")]
+  E,
+  #[msg("F")]
+  F,
 }

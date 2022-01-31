@@ -4,6 +4,13 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 use std::ops::Deref;
 
 const DECIMALS: u8 = 6;
+/// Anchor puts your accounts on the stack by default. But, likely, because your accounts are quite big, 
+/// or you have a lot of them, you're running of space on the stack.
+/// 
+/// 
+/// To solve this problem, you could try Boxing your account structs, to move them to the heap:
+/// https://stackoverflow.com/questions/70747729/how-do-i-avoid-my-anchor-program-throwing-an-access-violation-in-stack-frame
+
 
 #[derive(Accounts)]
 #[instruction(ido_name: String, bumps : PoolBumps)] 
@@ -160,6 +167,108 @@ pub struct ExchangeUsdcForWaterMelon<'info> {
 
 
   pub token_program: Program<'info, Token>,
+
+
+}
+
+
+#[derive(Accounts)]
+pub struct ExchangeUsdcForRedeemable<'info> {
+  pub user_authority: Signer<'info>,
+
+  #[account(mut,
+    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace()],
+    bump = ido_account.bumps.ido_account
+  )]
+  pub ido_account : Account<'info, IdoAccount>,
+
+  #[account(mut,
+    constraint = user_usdc.owner == user_authority.key() @ ErrorCode::A ,
+    constraint = user_usdc.mint == usdc_mint.key() @ ErrorCode::B
+  )]
+  pub user_usdc : Account<'info, TokenAccount>,
+
+  #[account(mut,
+    seeds = [user_authority.key().as_ref(),
+        ido_account.ido_name.as_ref().trim_ascii_whitespace(),
+        b"user_redeemable"],
+    bump
+  )]
+  pub user_redeemable : Account<'info, TokenAccount>,
+
+
+  #[account(mut, 
+    seeds = [
+      ido_account.ido_name.as_ref().trim_ascii_whitespace(),
+      b"pool_usdc".as_ref()
+    ],
+    bump = ido_account.bumps.pool_usdc
+  )]
+  pub pool_usdc : Account<'info, TokenAccount>,
+  
+  #[account(mut,
+    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"redeemable_mint"],
+    bump = ido_account.bumps.redeemable_mint
+  )]
+  pub redeemable_mint: Box<Account<'info, Mint>>,
+
+  #[account(constraint = usdc_mint.key() == ido_account.usdc_mint @ ErrorCode::F)]
+  pub usdc_mint : Box<Account<'info, Mint>>,
+
+  pub token_program : Program<'info, Token>
+}
+
+#[derive(Accounts)]
+pub struct ExchangeRedeemableForWatermelon<'info> {
+  pub user_authority : Signer<'info>,
+
+
+  #[account(mut,
+    seeds = [
+      ido_account.ido_name.as_ref().trim_ascii_whitespace()
+    ],
+    bump = ido_account.bumps.ido_account
+  )]
+  pub ido_account : Account<'info, IdoAccount>,
+
+
+  #[account(mut,
+    seeds = [
+      ido_account.ido_name.as_ref().trim_ascii_whitespace(), 
+      b"pool_watermelon".as_ref()
+    ],
+    bump = ido_account.bumps.pool_watermelon
+  )]
+  pub pool_watermelon : Account<'info, TokenAccount>,
+
+  #[account(mut,
+    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"redeemable_mint".as_ref()],
+    bump = ido_account.bumps.redeemable_mint
+  )]
+  pub redeemable_mint: Box<Account<'info, Mint>>,
+
+
+  #[account(constraint = watermelon_mint.key() == ido_account.watermelon_mint)]
+  pub watermelon_mint : Box<Account<'info, Mint>>,
+
+  #[account(mut,
+    seeds = [user_authority.key().as_ref(),
+        ido_account.ido_name.as_ref().trim_ascii_whitespace(),
+        b"user_redeemable".as_ref()],
+    bump
+  )]
+  pub user_redeemable: Account<'info, TokenAccount>,
+
+  #[account(mut,
+    constraint = user_watermelon.owner == user_authority.key(),
+    constraint = user_watermelon.mint == watermelon_mint.key()
+  )]
+  pub user_watermelon: Account<'info, TokenAccount>,
+
+
+
+  pub token_program : Program<'info, Token>
+
 
 
 }

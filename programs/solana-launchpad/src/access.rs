@@ -26,7 +26,8 @@ pub fn validate_ido_times(ido_times: IdoTimes) -> ProgramResult {
 
   require!(
     ido_times.start_ido < ido_times.end_whitelisted
-      && ido_times.end_whitelisted < ido_times.end_ido,
+      && ido_times.end_whitelisted < ido_times.end_deposits
+      && ido_times.end_deposits < ido_times.end_ido,
     ErrorCode::SeqTimes
   );
 
@@ -40,8 +41,8 @@ pub fn unrestricted_phase(ido_account: &IdoAccount) -> ProgramResult {
     ErrorCode::StartIdoTime
   );
   require!(
-    clock.unix_timestamp < ido_account.ido_times.end_ido,
-    ErrorCode::EndIdoTime
+    clock.unix_timestamp < ido_account.ido_times.end_deposits,
+    ErrorCode::EndDeposits
   );
   Ok(())
 }
@@ -58,6 +59,31 @@ pub fn whitelisted_phase(ido_account: &IdoAccount) -> ProgramResult {
     ErrorCode::EndWhitelistedTime
   );
 
+  Ok(())
+}
+
+pub fn deposit_phase(ido_account: &IdoAccount) -> ProgramResult {
+  let clock = Clock::get()?;
+
+  require!(
+    clock.unix_timestamp > ido_account.ido_times.end_whitelisted,
+    ErrorCode::WhitelistNotOver
+  );
+  require!(
+    clock.unix_timestamp < ido_account.ido_times.end_deposits,
+    ErrorCode::EndDeposits
+  );
+
+  Ok(())
+}
+
+pub fn withdraw_phase(ido_account: &IdoAccount) -> ProgramResult {
+  let clock = Clock::get()?;
+
+  require!(
+    clock.unix_timestamp > ido_account.ido_times.end_deposits,
+    ErrorCode::IdoNotOver
+  );
   Ok(())
 }
 
