@@ -8,6 +8,7 @@ import {
   hash,
   findRelatedProgramAddress,
   createATA,
+  getMintInfo,
 } from "./utils";
 import { Program } from "@project-serum/anchor";
 import { SolanaLaunchpad } from "../target/types/solana_launchpad";
@@ -126,7 +127,8 @@ describe("solana-launchpad", () => {
     const nowBn = new anchor.BN(Date.now() / 1000);
     idoTimes.startIdo = nowBn.add(new anchor.BN(5));
     idoTimes.endWhitelisted = nowBn.add(new anchor.BN(10));
-    idoTimes.endIdo = nowBn.add(new anchor.BN(15));
+    idoTimes.endDeposits = nowBn.add(new anchor.BN(15));
+    idoTimes.endIdo = nowBn.add(new anchor.BN(20));
 
     await program.rpc.initializePool(
       idoName,
@@ -158,7 +160,7 @@ describe("solana-launchpad", () => {
   let userWatermelon: anchor.web3.PublicKey;
   const whitelistDeposit = new anchor.BN(10_000);
 
-  it("should exchange USDC for watermelon", async () => {
+  it("should exchange USDC for watermelon (whitelisted)", async () => {
     // Wait until the IDO has opened.
     if (Date.now() < idoTimes.startIdo.toNumber() * 1000) {
       await sleep(idoTimes.startIdo.toNumber() * 1000 - Date.now() + 2000);
@@ -219,6 +221,237 @@ describe("solana-launchpad", () => {
     assert.ok(userWatermelonAccountInfo.amount.eq(amountOut));
   });
 
+  const firstDeposit = new anchor.BN(10_000_349);
+
+  it("should deposit USDC for redeemable", async () => {
+    if (Date.now() < idoTimes.endWhitelisted.toNumber() * 1000) {
+      await sleep(
+        idoTimes.endWhitelisted.toNumber() * 1000 - Date.now() + 2000
+      );
+    }
+
+    // find related program address
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
+
+    // create user redeemable account
+    const [userRedeemable] = await anchor.web3.PublicKey.findProgramAddress(
+      [
+        provider.wallet.publicKey.toBuffer(),
+        Buffer.from(idoName),
+        Buffer.from("user_redeemable"),
+      ],
+      program.programId
+    );
+
+    // mint usdc to user account
+    await usdcMintAccount.mintTo(
+      userUsdc,
+      provider.wallet.publicKey,
+      [],
+      firstDeposit.toNumber()
+    );
+    let userUsdcAccountInfo = await getTokenAccount(provider, userUsdc);
+    assert.ok(userUsdcAccountInfo.amount.eq(firstDeposit));
+
+    // send transaction
+    await program.rpc.exchangeUsdcForRedeemable(firstDeposit, {
+      accounts: {
+        userAuthority: program.provider.wallet.publicKey,
+        idoAccount,
+        userUsdc,
+        userRedeemable,
+        usdcMint,
+        redeemableMint,
+        poolUsdc,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      },
+      preInstructions: [
+        program.instruction.initUserRedeemable({
+          accounts: {
+            userAuthority: program.provider.wallet.publicKey,
+            userRedeemable,
+            idoAccount,
+            redeemableMint,
+            systemProgram: anchor.web3.SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          },
+        }),
+      ],
+    });
+  });
+
+  let secondUserKeypair = anchor.web3.Keypair.generate();
+  let secondUserUsdc: anchor.web3.PublicKey;
+  const secondDeposit = new anchor.BN(23_000_672);
+  it("should deposit USDC for redeemable (second user)", async () => {
+    if (Date.now() < idoTimes.endWhitelisted.toNumber() * 1000) {
+      await sleep(
+        idoTimes.endWhitelisted.toNumber() * 1000 - Date.now() + 2000
+      );
+    }
+
+    // find related program address
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
+
+    // create user redeemable account
+    const [secondUserRedeemable] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          secondUserKeypair.publicKey.toBuffer(),
+          Buffer.from(idoName),
+          Buffer.from("user_redeemable"),
+        ],
+        program.programId
+      );
+
+    // create second user usdc account
+    secondUserUsdc = await createATA(
+      secondUserKeypair,
+      usdcMint,
+      provider,
+      true
+    );
+
+    // mint usdc to user account
+    await usdcMintAccount.mintTo(
+      secondUserUsdc,
+      provider.wallet.publicKey,
+      [],
+      secondDeposit.toNumber()
+    );
+
+    let userUsdcAccountInfo = await getTokenAccount(provider, secondUserUsdc);
+    assert.ok(userUsdcAccountInfo.amount.eq(secondDeposit));
+
+    // send transaction
+    await program.rpc.exchangeUsdcForRedeemable(secondDeposit, {
+      accounts: {
+        userAuthority: secondUserKeypair.publicKey,
+        idoAccount,
+        userUsdc: secondUserUsdc,
+        userRedeemable: secondUserRedeemable,
+        usdcMint,
+        redeemableMint,
+        poolUsdc,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      },
+      preInstructions: [
+        program.instruction.initUserRedeemable({
+          accounts: {
+            userAuthority: secondUserKeypair.publicKey,
+            userRedeemable: secondUserRedeemable,
+            idoAccount,
+            redeemableMint,
+            systemProgram: anchor.web3.SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          },
+          signers: [secondUserKeypair],
+        }),
+      ],
+      signers: [secondUserKeypair],
+    });
+  });
+
+  it("should exchange redeemable for watermelon", async () => {
+    if (Date.now() < idoTimes.endIdo.toNumber() * 1000) {
+      await sleep(idoTimes.endIdo.toNumber() * 1000 - Date.now() + 2000);
+    }
+    const [[idoAccount], [redeemableMint]] = await findRelatedProgramAddress(
+      idoName,
+      program.programId
+    );
+
+    const [poolWatermelon] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from(idoName), Buffer.from("pool_watermelon")],
+      program.programId
+    );
+
+    const [userRedeemable] = await anchor.web3.PublicKey.findProgramAddress(
+      [
+        program.provider.wallet.publicKey.toBuffer(),
+        Buffer.from(idoName),
+        Buffer.from("user_redeemable"),
+      ],
+      program.programId
+    );
+
+    await program.rpc.exchangeRedeemableForWatermelon(firstDeposit, {
+      accounts: {
+        userAuthority: program.provider.wallet.publicKey,
+        idoAccount,
+        poolWatermelon,
+        redeemableMint,
+        watermelonMint,
+        userRedeemable,
+        userWatermelon,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      },
+    });
+
+    const userWatermelonInfo = await getTokenAccount(provider, userWatermelon);
+
+    console.log("first user watermelon ", userWatermelonInfo.amount.toString());
+  });
+
+  let secondUserWatermelon: anchor.web3.PublicKey;
+  it("should exchange redeemable for watermelon (second user)", async () => {
+    if (Date.now() < idoTimes.endIdo.toNumber() * 1000) {
+      await sleep(idoTimes.endIdo.toNumber() * 1000 - Date.now() + 2000);
+    }
+    const [[idoAccount], [redeemableMint]] = await findRelatedProgramAddress(
+      idoName,
+      program.programId
+    );
+
+    const [poolWatermelon] = await anchor.web3.PublicKey.findProgramAddress(
+      [Buffer.from(idoName), Buffer.from("pool_watermelon")],
+      program.programId
+    );
+
+    const [secondUserRedeemable] =
+      await anchor.web3.PublicKey.findProgramAddress(
+        [
+          secondUserKeypair.publicKey.toBuffer(),
+          Buffer.from(idoName),
+          Buffer.from("user_redeemable"),
+        ],
+        program.programId
+      );
+
+    secondUserWatermelon = await createATA(
+      secondUserKeypair,
+      watermelonMint,
+      provider
+    );
+
+    await program.rpc.exchangeRedeemableForWatermelon(firstDeposit, {
+      accounts: {
+        userAuthority: secondUserKeypair.publicKey,
+        userRedeemable: secondUserRedeemable,
+        userWatermelon: secondUserWatermelon,
+        idoAccount,
+        poolWatermelon,
+        redeemableMint,
+        watermelonMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      },
+      signers: [secondUserKeypair],
+    });
+    const secondUserWatermelonInfo = await getTokenAccount(
+      provider,
+      secondUserWatermelon
+    );
+
+    console.log(
+      "second user watermelon ",
+      secondUserWatermelonInfo.amount.toString()
+    );
+  });
+
   function PoolBumps() {
     this.idoAccount;
     this.redeemableMint;
@@ -229,8 +462,8 @@ describe("solana-launchpad", () => {
   function IdoTimes() {
     this.startIdo;
     this.endWhitelisted;
+    this.endDeposits;
     this.endIdo;
-    this.endEscrow;
   }
 });
 // describe("solana-launchpad", () => {

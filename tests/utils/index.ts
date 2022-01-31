@@ -20,6 +20,13 @@ export async function getTokenAccount(
   return await serumCmn.getTokenAccount(provider, addr);
 }
 
+export function getMintInfo(
+  provider: serumCmn.Provider,
+  addr: anchor.web3.PublicKey
+) {
+  return serumCmn.getMintInfo(provider, addr);
+}
+
 export async function createMint(
   provider: serumCmn.Provider,
   authority?: anchor.web3.PublicKey
