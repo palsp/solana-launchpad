@@ -65,6 +65,9 @@ pub fn whitelisted_phase(ido_account: &IdoAccount) -> ProgramResult {
 pub fn deposit_phase(ido_account: &IdoAccount) -> ProgramResult {
   let clock = Clock::get()?;
 
+  msg!("{}", clock.unix_timestamp);
+  msg!("{}", ido_account.ido_times.end_whitelisted);
+
   require!(
     clock.unix_timestamp > ido_account.ido_times.end_whitelisted,
     ErrorCode::WhitelistNotOver

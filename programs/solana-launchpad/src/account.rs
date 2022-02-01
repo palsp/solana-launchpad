@@ -12,6 +12,7 @@ pub struct IdoAccount {
   pub redeemable_mint: Pubkey,
   pub watermelon_mint: Pubkey,
   pub pool_usdc: Pubkey,
+  pub pool_native: Pubkey,
   pub pool_watermelon: Pubkey,
   pub private_target_investment: u64,
   pub num_ido_tokens_private: u64,
@@ -33,6 +34,7 @@ pub struct PoolBumps {
   pub redeemable_mint: u8,
   pub pool_watermelon: u8,
   pub pool_usdc: u8,
+  pub pool_native: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Default, Clone, Copy)]
