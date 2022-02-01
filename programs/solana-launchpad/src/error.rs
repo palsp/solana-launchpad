@@ -2,6 +2,14 @@ use anchor_lang::prelude::*;
 
 #[error]
 pub enum ErrorCode {
+  #[msg("USDC pool is missing")]
+  MissingUsdcPool,
+  #[msg("USDC pool is not needed")]
+  UnnecessaryUsdcPool,
+  #[msg("USDC mint is missing")]
+  MissingUsdcMint,
+  #[msg("USDC mint is not needed")]
+  UnnecessaryUsdcMint,
   #[msg("IDO must start in the future")]
   IdoFuture,
   #[msg("IDO times are non-sequential")]
