@@ -61,6 +61,20 @@ export async function createTokenAccount(
   return vault;
 }
 
+export async function createWrapNativeAccount(
+  provider,
+  owner: anchor.web3.PublicKey,
+  amount: number
+) {
+  return Token.createWrappedNativeAccount(
+    provider.connection,
+    TOKEN_PROGRAM_ID,
+    owner,
+    provider.wallet.payer,
+    amount
+  );
+}
+
 export function hash(value: string | number | anchor.BN | Buffer) {
   return keccak256(value);
 }

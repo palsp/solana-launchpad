@@ -2,7 +2,7 @@ import * as anchor from "@project-serum/anchor";
 import { describe } from "mocha";
 import { Program } from "@project-serum/anchor";
 import { SolanaLaunchpad } from "../target/types/solana_launchpad";
-import { Token, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Token, TOKEN_PROGRAM_ID, NATIVE_MINT } from "@solana/spl-token";
 import * as assert from "assert";
 import { faker } from "@faker-js/faker";
 
@@ -11,13 +11,13 @@ import {
   getTokenAccount,
   createMint,
   createTokenAccount,
-  getProof,
-  hash,
+  createWrapNativeAccount,
   findRelatedProgramAddress,
   createATA,
+  requestAirdrop,
 } from "./utils";
 
-describe("launchpad native", async () => {
+describe("launchpad wsol", async () => {
   const provider = anchor.Provider.env();
   anchor.setProvider(provider);
 
@@ -32,8 +32,7 @@ describe("launchpad native", async () => {
     watermelonIdoPublicAmount
   );
 
-  let usdcMintAccount: Token;
-  let usdcMint: anchor.web3.PublicKey;
+  let usdcMint: anchor.web3.PublicKey = NATIVE_MINT;
   let watermelonMintAccount: Token;
   let watermelonMint: anchor.web3.PublicKey;
 
@@ -41,9 +40,7 @@ describe("launchpad native", async () => {
   let idoAuthorityWatermelon: anchor.web3.PublicKey;
 
   it("Initializes the state-of-the-world", async () => {
-    usdcMintAccount = await createMint(provider);
     watermelonMintAccount = await createMint(provider);
-    usdcMint = usdcMintAccount.publicKey;
     watermelonMint = watermelonMintAccount.publicKey;
 
     idoAuthorityUsdc = await createTokenAccount(
@@ -64,22 +61,16 @@ describe("launchpad native", async () => {
       [],
       totalWatermelonIdoAmount.toNumber()
     );
-
-    const _idoAuthorityWatermelonAccount = await getTokenAccount(
-      provider,
-      idoAuthorityWatermelon
-    );
-
-    assert.ok(
-      _idoAuthorityWatermelonAccount.amount.eq(totalWatermelonIdoAmount)
-    );
   });
 
   let idoTimes;
   let idoName = faker.name.firstName().slice(0, 10);
-  it("should initialize native pool", async () => {
-    const [[idoAccount, idoAccountBump], [redeemableMint, redeemableMintBump]] =
-      await findRelatedProgramAddress(idoName, program.programId);
+  it("should initialize WSOL pool", async () => {
+    const [
+      [idoAccount, idoAccountBump],
+      [redeemableMint, redeemableMintBump],
+      [poolUsdc, poolUsdcBump],
+    ] = await findRelatedProgramAddress(idoName, program.programId);
 
     const [poolWatermelon, poolWatermelonBump] =
       await anchor.web3.PublicKey.findProgramAddress(
@@ -87,34 +78,29 @@ describe("launchpad native", async () => {
         program.programId
       );
 
-    const [poolNative, poolNativeBump] =
-      await anchor.web3.PublicKey.findProgramAddress(
-        [Buffer.from(idoName), Buffer.from("pool_native")],
-        program.programId
-      );
-
     let bumps = new PoolBumps();
     bumps.idoAccount = idoAccountBump;
     bumps.redeemableMint = redeemableMintBump;
     bumps.poolWatermelon = poolWatermelonBump;
-    bumps.poolUsdc = 0;
-    bumps.poolNative = poolNativeBump;
+    bumps.poolUsdc = poolUsdcBump;
 
     // Initialize ido times
     idoTimes = new IdoTimes();
 
     const nowBn = new anchor.BN(Date.now() / 1000);
     idoTimes.startIdo = nowBn.add(new anchor.BN(5));
-    idoTimes.endWhitelisted = nowBn.add(new anchor.BN(10));
+    idoTimes.endWhitelisted = nowBn.add(new anchor.BN(6));
     idoTimes.endDeposits = nowBn.add(new anchor.BN(15));
-    idoTimes.endIdo = nowBn.add(new anchor.BN(20));
-    await program.rpc.initializePoolNative(
+    idoTimes.endIdo = nowBn.add(new anchor.BN(16));
+
+    await program.rpc.initializePool(
       idoName,
       bumps,
       privateTargetInvestment,
       watermelonIdoPublicAmount,
       watermelonIdoPrivateAmount,
       idoTimes,
+      null,
       {
         accounts: {
           idoAuthority: provider.wallet.publicKey,
@@ -123,7 +109,8 @@ describe("launchpad native", async () => {
           redeemableMint,
           watermelonMint,
           poolWatermelon,
-          poolNative,
+          usdcMint,
+          poolUsdc,
           systemProgram: anchor.web3.SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
@@ -132,8 +119,10 @@ describe("launchpad native", async () => {
     );
   });
 
+  const investor1 = anchor.web3.Keypair.generate();
   const firstDeposit = new anchor.BN(10_000_000);
-  it("should deposit USDC for redeemable", async () => {
+  let investor1WSol: anchor.web3.PublicKey;
+  it("should deposit WSOL for redeemable", async () => {
     if (Date.now() < idoTimes.endWhitelisted.toNumber() * 1000) {
       await sleep(
         idoTimes.endWhitelisted.toNumber() * 1000 - Date.now() + 2100
@@ -141,39 +130,43 @@ describe("launchpad native", async () => {
     }
 
     // find related program address
-    const [[idoAccount], [redeemableMint]] = await findRelatedProgramAddress(
-      idoName,
-      program.programId
-    );
+    const [[idoAccount], [redeemableMint], [poolUsdc]] =
+      await findRelatedProgramAddress(idoName, program.programId);
 
-    const [poolNative] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("pool_native")],
-      program.programId
+    await requestAirdrop(investor1.publicKey, provider);
+
+    investor1WSol = await createWrapNativeAccount(
+      provider,
+      investor1.publicKey,
+      firstDeposit.toNumber()
     );
 
     // create user redeemable account
     const [userRedeemable] = await anchor.web3.PublicKey.findProgramAddress(
       [
-        provider.wallet.publicKey.toBuffer(),
+        investor1.publicKey.toBuffer(),
         Buffer.from(idoName),
         Buffer.from("user_redeemable"),
       ],
       program.programId
     );
-    await program.rpc.exchangeNativeForRedeemable(firstDeposit, {
+
+    await program.rpc.exchangeUsdcForRedeemable(firstDeposit, {
       accounts: {
-        userAuthority: provider.wallet.publicKey,
+        userAuthority: investor1.publicKey,
         idoAccount,
+        userUsdc: investor1WSol,
         userRedeemable,
+        usdcMint,
         redeemableMint,
-        poolNative,
-        systemProgram: anchor.web3.SystemProgram.programId,
+        poolUsdc,
         tokenProgram: TOKEN_PROGRAM_ID,
       },
+      signers: [investor1],
       preInstructions: [
         program.instruction.initUserRedeemable({
           accounts: {
-            userAuthority: program.provider.wallet.publicKey,
+            userAuthority: investor1.publicKey,
             userRedeemable,
             idoAccount,
             redeemableMint,
@@ -181,6 +174,7 @@ describe("launchpad native", async () => {
             tokenProgram: TOKEN_PROGRAM_ID,
             rent: anchor.web3.SYSVAR_RENT_PUBKEY,
           },
+          signers: [investor1],
         }),
       ],
     });
@@ -196,7 +190,7 @@ describe("launchpad native", async () => {
       program.programId
     );
 
-    userWatermelon = await createATA(provider.wallet, watermelonMint, provider);
+    userWatermelon = await createATA(investor1, watermelonMint, provider);
 
     const [poolWatermelon] = await anchor.web3.PublicKey.findProgramAddress(
       [Buffer.from(idoName), Buffer.from("pool_watermelon")],
@@ -205,7 +199,7 @@ describe("launchpad native", async () => {
 
     const [userRedeemable] = await anchor.web3.PublicKey.findProgramAddress(
       [
-        program.provider.wallet.publicKey.toBuffer(),
+        investor1.publicKey.toBuffer(),
         Buffer.from(idoName),
         Buffer.from("user_redeemable"),
       ],
@@ -214,7 +208,7 @@ describe("launchpad native", async () => {
 
     await program.rpc.exchangeRedeemableForWatermelon(firstDeposit, {
       accounts: {
-        userAuthority: program.provider.wallet.publicKey,
+        userAuthority: investor1.publicKey,
         idoAccount,
         poolWatermelon,
         redeemableMint,
@@ -223,40 +217,65 @@ describe("launchpad native", async () => {
         userWatermelon,
         tokenProgram: TOKEN_PROGRAM_ID,
       },
+      signers: [investor1],
     });
 
     const userWatermelonInfo = await getTokenAccount(provider, userWatermelon);
 
-    console.log("first user watermelon ", userWatermelonInfo.amount.toString());
+    const idoAccountInfo = await program.account.idoAccount.fetch(idoAccount);
+    assert.ok(idoAccountInfo.poolInfo.isInitialized);
+
+    const amountOut = firstDeposit
+      .mul(watermelonIdoPublicAmount)
+      .div(idoAccountInfo.poolInfo.redeemableMinted);
+
+    assert.ok(userWatermelonInfo.amount.eq(amountOut));
   });
 
   it("should withdraw", async () => {
-    const [[idoAccount]] = await findRelatedProgramAddress(
+    const [[idoAccount], , [poolUsdc]] = await findRelatedProgramAddress(
       idoName,
       program.programId
     );
-    const [poolNative] = await anchor.web3.PublicKey.findProgramAddress(
-      [Buffer.from(idoName), Buffer.from("pool_native")],
-      program.programId
-    );
-
-    let idoAuthorityAccountInfo = await provider.connection.getAccountInfo(
-      program.provider.wallet.publicKey
-    );
-    console.log("before ", idoAuthorityAccountInfo.lamports);
-    await program.rpc.withdrawNative(firstDeposit, {
+    let userUsdcAccountInfo = await getTokenAccount(provider, idoAuthorityUsdc);
+    assert.ok(userUsdcAccountInfo.amount.eq(new anchor.BN(0)));
+    await program.rpc.withdrawPoolUsdc({
       accounts: {
+        payer: provider.wallet.publicKey,
         userAuthority: provider.wallet.publicKey,
+        userUsdc: idoAuthorityUsdc,
         idoAccount,
-        poolNative,
-        systemProgram: anchor.web3.SystemProgram.programId,
+        poolUsdc,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
       },
     });
 
-    idoAuthorityAccountInfo = await provider.connection.getAccountInfo(
-      program.provider.wallet.publicKey
-    );
-    console.log("after ", idoAuthorityAccountInfo.lamports);
+    userUsdcAccountInfo = await getTokenAccount(provider, idoAuthorityUsdc);
+    assert.ok(userUsdcAccountInfo.amount.eq(firstDeposit));
+
+    // Unwrap WSOL to SOL
+    // const investor1WSolAccInfo = await getTokenAccount(provider, investor1WSol);
+    // console.log("token amount", investor1WSolAccInfo.amount.toString());
+
+    // const ix = Token.createCloseAccountInstruction(
+    //   TOKEN_PROGRAM_ID,
+    //   investor1WSol,
+    //   investor1.publicKey,
+    //   investor1.publicKey,
+    //   []
+    // );
+
+    // let investor1AccountInfo = await provider.connection.getAccountInfo(
+    //   investor1.publicKey
+    // );
+
+    // const tx = new anchor.web3.Transaction().add(ix);
+    // await provider.send(tx, [investor1]);
+
+    // investor1AccountInfo = await provider.connection.getAccountInfo(
+    //   investor1.publicKey
+    // );
   });
 
   function PoolBumps() {
