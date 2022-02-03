@@ -5,16 +5,6 @@ use crate::{
 };
 use anchor_lang::prelude::*;
 
-fn only_when_ido_is_started(ido_account: &IdoAccount) -> ProgramResult {
-  let clock = Clock::get()?;
-  require!(
-    clock.unix_timestamp > ido_account.ido_times.start_ido,
-    ErrorCode::StartIdoTime
-  );
-
-  Ok(())
-}
-
 // Asserts the IDO starts in the future.
 pub fn validate_ido_times(ido_times: IdoTimes) -> ProgramResult {
   let clock = Clock::get()?;
@@ -87,6 +77,17 @@ pub fn withdraw_phase(ido_account: &IdoAccount) -> ProgramResult {
     clock.unix_timestamp > ido_account.ido_times.end_deposits,
     ErrorCode::IdoNotOver
   );
+  Ok(())
+}
+
+pub fn ido_is_over(ido_account: &IdoAccount) -> ProgramResult {
+  let clock = Clock::get()?;
+
+  require!(
+    clock.unix_timestamp > ido_account.ido_times.end_ido,
+    ErrorCode::IdoNotOver
+  );
+
   Ok(())
 }
 

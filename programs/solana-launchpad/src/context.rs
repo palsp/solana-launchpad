@@ -14,79 +14,6 @@ const DECIMALS: u8 = 6;
 
 
 
-pub struct Pool<'info> {
-  pub ido_authority: Signer<'info>,
-  // pub ido_authority_watermelon: Box<Account<'info, TokenAccount>>, 
-  // pub ido_account: Account<'info, IdoAccount>,
-  // pub redeemable_mint : Box<Account<'info, Mint>>,
-  // pub watermelon_mint : Box<Account<'info, Mint>>,
-  // pub pool_watermelon: Account<'info, TokenAccount>,
-  // pub system_program : Program<'info, System>,
-  // pub token_program : Program<'info, Token>,
-  // pub rent: Sysvar<'info, Rent>,
-}
-
-
-#[derive(Accounts)]
-#[instruction(ido_name: String, bumps : PoolBumps)] 
-pub struct InitializePoolNative<'info> {
-  #[account(mut)]
-  pub ido_authority: Signer<'info>,
-
-  #[account(mut,
-    constraint = ido_authority_watermelon.owner == ido_authority.key(),
-    constraint = ido_authority_watermelon.mint == watermelon_mint.key()
-  )]
-  pub ido_authority_watermelon: Box<Account<'info, TokenAccount>>, 
-
-  #[account(init, 
-    seeds = [ido_name.as_bytes()],
-    bump = bumps.ido_account,
-    payer = ido_authority
-  )]
-  pub ido_account: Account<'info, IdoAccount>,
-
-  #[account(init,
-    mint::decimals = DECIMALS,
-    mint::authority = ido_account,
-    seeds = [ido_name.as_bytes(), b"redeemable_mint".as_ref()],
-    bump = bumps.redeemable_mint,
-    payer = ido_authority
-  )]
-  pub redeemable_mint : Box<Account<'info, Mint>>,
-
-
-  #[account(constraint = watermelon_mint.key() == ido_authority_watermelon.mint)]
-  pub watermelon_mint : Box<Account<'info, Mint>>,
-
-
-  #[account(init,
-    token::mint = watermelon_mint,
-    token::authority = ido_account,
-    seeds = [ido_name.as_bytes(), b"pool_watermelon"],
-    bump = bumps.pool_watermelon,
-    payer = ido_authority
-  )]
-  pub pool_watermelon: Account<'info, TokenAccount>,
-
-  #[account(
-    seeds = [
-      ido_name.as_bytes(),
-      b"pool_native".as_ref()
-    ], 
-    bump = bumps.pool_native
-  )]
-  pub pool_native : AccountInfo<'info>,
-
-  pub system_program : Program<'info, System>,
-
-  pub token_program : Program<'info, Token>,
-
-  pub rent: Sysvar<'info, Rent>,
-}
-
-
-
 #[derive(Accounts)]
 #[instruction(ido_name: String, bumps : PoolBumps)] 
 pub struct InitializePool<'info> {
@@ -107,9 +34,9 @@ pub struct InitializePool<'info> {
   pub ido_account: Account<'info, IdoAccount>,
 
 
-  #[account(
-    constraint = usdc_mint.decimals == DECIMALS
-  )]
+  // #[account(
+  //   constraint = usdc_mint.decimals == DECIMALS 
+  // )]
   pub usdc_mint : Box<Account<'info,Mint>>,
 
 
@@ -151,8 +78,6 @@ pub struct InitializePool<'info> {
 
   pub rent: Sysvar<'info, Rent>,
 }
-
-
 
 #[derive(Accounts)]
 pub struct InitUserRedeemable<'info> {
@@ -296,44 +221,8 @@ pub struct ExchangeUsdcForRedeemable<'info> {
 }
 
 #[derive(Accounts)]
-pub struct ExchangeNativeForRedeemable<'info> {
-  #[account(mut)]
-  pub user_authority: Signer<'info>,
-
-  #[account(mut,
-    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace()],
-    bump = ido_account.bumps.ido_account
-  )]
-  pub ido_account : Account<'info, IdoAccount>,
-
-  #[account(mut,
-    seeds = [user_authority.key().as_ref(),
-        ido_account.ido_name.as_ref().trim_ascii_whitespace(),
-        b"user_redeemable"],
-    bump
-  )]
-  pub user_redeemable : Account<'info, TokenAccount>,
-
-  
-  #[account(mut,
-    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"redeemable_mint"],
-    bump = ido_account.bumps.redeemable_mint
-  )]
-  pub redeemable_mint: Box<Account<'info, Mint>>,
-
-  #[account(mut,
-    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"pool_native"],
-    bump = ido_account.bumps.pool_native
-  )]
-  pub pool_native : AccountInfo<'info>,
-
-  pub system_program: Program<'info, System>,
-
-  pub token_program: Program<'info, Token>
-}
-
-#[derive(Accounts)]
 pub struct ExchangeRedeemableForWatermelon<'info> {
+  #[account(mut)]
   pub user_authority : Signer<'info>,
 
 
@@ -388,11 +277,20 @@ pub struct ExchangeRedeemableForWatermelon<'info> {
 }
 
 #[derive(Accounts)]
-pub struct WithdrawNative<'info> {
+pub struct WithdrawPoolUsdc<'info> {
+  // User does not have to sign, this allows anyone to redeem on their behalf
+  // and prevents forgotten / leftover USDC in the IDO pool.
+  pub payer : Signer<'info>,
+
   #[account(mut,
     constraint = user_authority.key() == ido_account.ido_authority
   )]
-  pub user_authority : Signer<'info>,
+  pub user_authority : AccountInfo<'info>,
+
+  #[account(mut,
+    constraint = user_usdc.owner == user_authority.key(),
+    constraint = user_usdc.mint == usdc_mint.key())]
+  pub user_usdc: Box<Account<'info, TokenAccount>>,
 
 
   #[account(
@@ -402,12 +300,16 @@ pub struct WithdrawNative<'info> {
   pub ido_account : Account<'info, IdoAccount>,
 
   #[account(mut,
-    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"pool_native"],
-    bump = ido_account.bumps.pool_native
-  )]
-  pub pool_native: AccountInfo<'info>,
+    seeds = [ido_account.ido_name.as_ref().trim_ascii_whitespace(), b"pool_usdc"],
+    bump = ido_account.bumps.pool_usdc)]
+  pub pool_usdc: Box<Account<'info, TokenAccount>>,
 
-  pub system_program : Program<'info, System>
+  #[account(
+    constraint = ido_account.usdc_mint == usdc_mint.key()
+  )]
+  pub usdc_mint: Box<Account<'info, Mint>>,
+
+  pub token_program : Program<'info, Token>
 }
 
 /// Trait to allow trimming ascii whitespace from a &[u8].
